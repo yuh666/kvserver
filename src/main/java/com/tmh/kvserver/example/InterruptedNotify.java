@@ -1,4 +1,4 @@
-package com.tmh.example;
+package com.tmh.kvserver.example;
 
 import java.util.ArrayList;
 import java.util.List;
