@@ -8,6 +8,7 @@ import lombok.Setter;
 public class Command {
     
     private int commandType; // command的类型 
-    private String data; // command的数据
+    private String key; // key
+    private String val; // val
     
 }

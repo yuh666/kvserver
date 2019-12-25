@@ -7,6 +7,7 @@ import com.tmh.kvserver.raft.bean.LogEntry;
 import com.tmh.kvserver.raft.bean.RaftStateEnum;
 
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.ExecutorService;
@@ -25,7 +26,7 @@ public class Raft implements InitializingBean {
     private int currentTerm; // 当前term
     private int votedFor; // 给谁投票
     private List<LogEntry> log = new ArrayList<>();
-    private StateMachine stateMachine; // 状态机
+
 
     // Volitale state on all servers
     private int commitIndex; // 提交位置
@@ -42,6 +43,10 @@ public class Raft implements InitializingBean {
     private Lock appendLock = new ReentrantLock(); // 追加日志时的锁
     private Condition appendCondtion = appendLock.newCondition(); // 追加日志时唤醒flw
     private Thread raftThread = new Thread(new RaftMainLoop());// Raft的主线程
+
+
+    @Autowired
+    private StateMachine stateMachine; // 状态机
 
     @Override
     public void afterPropertiesSet() throws Exception {
