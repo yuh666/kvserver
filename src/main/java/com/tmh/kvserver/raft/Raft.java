@@ -7,6 +7,7 @@ import com.tmh.kvserver.raft.bean.LogEntry;
 import com.tmh.kvserver.raft.bean.RaftStateEnum;
 
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.stereotype.Service;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -17,6 +18,7 @@ import java.util.concurrent.locks.Condition;
 /**
  * Raft实现
  */
+@Service
 public class Raft implements InitializingBean {
 
     // Persistent state on all servers
