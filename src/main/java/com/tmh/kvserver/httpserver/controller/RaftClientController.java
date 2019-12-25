@@ -21,7 +21,7 @@ public class RaftClientController {
 
     @RequestMapping("/request-vote")
     @ResponseBody
-    public Object reuqestForVote(String payload){
+    public Object requestForVote(String payload){
         VoteRequest request =  GsonUtils.fromJson(payload, VoteRequest.class);
         //TODO: 交给Raft处理
         return Result.success("");
