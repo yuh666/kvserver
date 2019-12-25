@@ -62,12 +62,12 @@ public class Raft implements InitializingBean {
     private volatile boolean flag = Boolean.FALSE;
 
     /**
-     * 心跳间隔时间 5ms
+     * 心跳间隔时间 5s
      */
     private int heartBeatTick = 5 * 1000;
 
     /**
-     * 选举间隔时间 15-30ms
+     * 选举间隔时间 15-30s
      */
     private int electionTime = 15 * 1000;
 
@@ -236,7 +236,7 @@ public class Raft implements InitializingBean {
                     try {
                         // 选举超时时间
                         int electionTime = random.nextInt(Raft.this.electionTime) + Raft.this.electionTime;
-                        log.info("cd electionTime:{}", electionTime);
+                        log.info("cd electionTime:{}", electionTime + "ms");
                         countDownLatch.await(electionTime, TimeUnit.MILLISECONDS);
                         if (countDownLatch.getCount() == 0) {
                             //  如果接收到大多数服务器的选票，那么就变成领导人
