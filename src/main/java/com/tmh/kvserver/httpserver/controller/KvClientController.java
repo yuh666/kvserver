@@ -1,5 +1,6 @@
 package com.tmh.kvserver.httpserver.controller;
 
+import com.tmh.kvserver.httpserver.Result;
 import com.tmh.kvserver.raft.Raft;
 import com.tmh.kvserver.raft.StateMachine;
 
@@ -24,7 +25,7 @@ public class KvClientController {
     @ResponseBody
     public Object get(String key) {
         //TODO: 1.判断是否重定向  2.查询     
-        return null;
+        return Result.success("");
     }
 
 
@@ -32,7 +33,7 @@ public class KvClientController {
     @ResponseBody
     public Object put(String key,String val) {
         //TODO: 1.判断是否重定向  2.处理    
-        return null;
+        return Result.success("");
     }
 
 }

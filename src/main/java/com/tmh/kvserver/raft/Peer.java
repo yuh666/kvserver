@@ -4,7 +4,7 @@ import com.tmh.kvserver.raft.bean.AppendEntriesRequest;
 import com.tmh.kvserver.raft.bean.AppendEntriesResponse;
 import com.tmh.kvserver.raft.bean.VoteRequest;
 import com.tmh.kvserver.raft.bean.VoteResponse;
-import java.util.concurrent.ExecutorService;
+
 
 public class Peer{
 

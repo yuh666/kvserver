@@ -1,5 +1,6 @@
 package com.tmh.kvserver.httpserver.controller;
 
+import com.tmh.kvserver.httpserver.Result;
 import com.tmh.kvserver.raft.Raft;
 import com.tmh.kvserver.raft.bean.AppendEntriesRequest;
 import com.tmh.kvserver.raft.bean.VoteRequest;
@@ -23,7 +24,7 @@ public class RaftClientController {
     public Object reuqestForVote(String payload){
         VoteRequest request =  GsonUtils.fromJson(payload, VoteRequest.class);
         //TODO: 交给Raft处理
-        return null;
+        return Result.success("");
     }
 
 
@@ -32,7 +33,6 @@ public class RaftClientController {
     public Object appendEntries(String payload){
         AppendEntriesRequest request =  GsonUtils.fromJson(payload, AppendEntriesRequest.class);
         //TODO: 交给Raft处理
-        return null;
+        return Result.success("");
     }
-
 }
