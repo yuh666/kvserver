@@ -3,12 +3,12 @@ package com.tmh.kvserver.httpserver;
 
 public class Result<T> {
 
-  
-    private int code;
-    private String msg;
-    private T body;
 
-    private Result(int code,String msg,T body){
+    private int    code;
+    private String msg;
+    private T      body;
+
+    private Result(int code, String msg, T body) {
         this.code = code;
         this.msg = msg;
         this.body = body;

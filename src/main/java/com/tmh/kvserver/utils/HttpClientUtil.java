@@ -1,5 +1,6 @@
 package com.tmh.kvserver.utils;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.HttpPost;
@@ -11,7 +12,10 @@ import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
 import org.apache.http.util.EntityUtils;
 import org.springframework.util.StringUtils;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.util.HashMap;
 
@@ -21,6 +25,7 @@ import java.util.HashMap;
  * version: 1.0
  * Description:httpCilent utils
  **/
+@Slf4j
 public class HttpClientUtil {
 
     /**
@@ -93,8 +98,8 @@ public class HttpClientUtil {
      * @param url  请求路径
      * @param body 请求体
      */
-    public static HttpResponse restPost(String url, String body) throws IOException {
-
+    public static String restPost(String url, String body) {
+        String result = null;
         HttpPost httpPost = null;
         HttpResponse response = null;
         try {
@@ -109,15 +114,38 @@ public class HttpClientUtil {
             }
 
             response = builder().execute(httpPost);
-
+            if (response != null && response.getStatusLine().getStatusCode() == 200) {
+                InputStream inputStream = response.getEntity().getContent();
+                result = read(inputStream);
+            }
+        } catch (Exception e) {
+            log.error("发送http请求异常,异常信息:{}", e.getMessage());
         } finally {
             if (httpPost != null) {
                 httpPost.releaseConnection();
             }
             if (response != null) {
-                EntityUtils.consume(response.getEntity());
+                try {
+                    EntityUtils.consume(response.getEntity());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         }
-        return response;
+        return result;
+    }
+
+    public static String read(InputStream input) {
+        StringBuilder sb = new StringBuilder();
+        BufferedReader br = new BufferedReader(new InputStreamReader(input));
+        String line;
+        try {
+            while ((line = br.readLine()) != null) {
+                sb.append(line);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return sb.toString();
     }
 }

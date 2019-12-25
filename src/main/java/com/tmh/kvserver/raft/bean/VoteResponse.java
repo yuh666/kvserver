@@ -6,9 +6,9 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class VoteResponse{
+public class VoteResponse {
 
-    private int term; // flw term
+    private int     term; // flw term
     private boolean voteGranted; // 是否成功
 
 }

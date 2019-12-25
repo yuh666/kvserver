@@ -4,9 +4,10 @@ import com.tmh.kvserver.raft.bean.AppendEntriesRequest;
 import com.tmh.kvserver.raft.bean.AppendEntriesResponse;
 import com.tmh.kvserver.raft.bean.VoteRequest;
 import com.tmh.kvserver.raft.bean.VoteResponse;
+import lombok.Data;
 import lombok.ToString;
 
-@ToString
+@Data
 public class Peer {
 
     private String host; // 节点 host
