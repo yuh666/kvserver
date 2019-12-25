@@ -31,7 +31,7 @@ public class Raft implements InitializingBean {
 
     // Persistent state on all servers
     private int            currentTerm; // 当前term
-    private int            votedFor; // 给谁投票
+    private Integer            votedFor; // 给谁投票
     private List<LogEntry> logEntrys = new ArrayList<>();
 
     // Volitale state on all servers
@@ -70,6 +70,9 @@ public class Raft implements InitializingBean {
     private void initPeers() {
         Properties properties = System.getProperties();
         Object port = properties.get("server.port");
+        if (port == null){
+            throw new IllegalArgumentException("server.port must not null, -Dserver.port");
+        }
         if (StringUtils.isEmpty(serverPeers)) {
             throw new IllegalArgumentException("server.peers must not null");
         }
