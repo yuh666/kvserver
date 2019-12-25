@@ -34,7 +34,7 @@ public class Raft implements InitializingBean {
     private int[] matchIndex; // 每个节点的接受的最大的index
 
     // Non-Paper Fields
-    private RaftStateEnum raftState = RaftStateEnum.Follower; // 节点角色
+    private volatile RaftStateEnum raftState = RaftStateEnum.Follower; // 节点角色
     private ExecutorService pool = Executors.newFixedThreadPool(100);
     private Peer[] peers; // 其他节点
     private Lock appendLock = new ReentrantLock(); // 追加日志时的锁
