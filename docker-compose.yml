@@ -22,5 +22,5 @@ services:
     network_mode: host
     ipc: host
     environment:
-      - "serverPort=8082"
+      - "serverPort=8083"
       - "serverPeers=localhost:8081:1,localhost:8082:2,localhost:8083:3"
