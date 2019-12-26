@@ -1,6 +1,8 @@
 package com.tmh.kvserver.httpserver;
 
 
+import com.tmh.kvserver.enums.ErrorCodeEnum;
+
 public class Result<T> {
 
 
@@ -39,7 +41,7 @@ public class Result<T> {
     }
 
     public static <T> Result<T> success(T body) {
-        return new Result<T>(0, "ok", body);
+        return new Result<T>(ErrorCodeEnum.SUCCESS.getCode(), "ok", body);
     }
 
     public static <T> Result<T> fail(int code, String msg) {

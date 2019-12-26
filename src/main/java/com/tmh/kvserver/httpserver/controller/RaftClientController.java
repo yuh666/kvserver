@@ -3,6 +3,7 @@ package com.tmh.kvserver.httpserver.controller;
 import com.tmh.kvserver.httpserver.Result;
 import com.tmh.kvserver.raft.Raft;
 import com.tmh.kvserver.raft.bean.AppendEntriesRequest;
+import com.tmh.kvserver.raft.bean.AppendEntriesResponse;
 import com.tmh.kvserver.raft.bean.VoteRequest;
 import com.tmh.kvserver.utils.GsonUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -31,10 +32,9 @@ public class RaftClientController {
 
     @RequestMapping("/append-entries")
     @ResponseBody
-    public Result appendEntries(String payload) {
-        AppendEntriesRequest request = GsonUtils.fromJson(payload, AppendEntriesRequest.class);
-        raft.appendEntries(request);
+    public Result appendEntries(@RequestBody AppendEntriesRequest request) {
+        AppendEntriesResponse response = raft.appendEntries(request);
         //TODO: 交给Raft处理
-        return Result.success("");
+        return Result.success(response);
     }
 }
