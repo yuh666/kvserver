@@ -10,14 +10,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -49,6 +50,7 @@ public class Raft implements InitializingBean {
     private          Peer[]          peers; // 其他节点
     private          Lock            appendLock     = new ReentrantLock(); // 追加日志时的锁
     private          Condition       appendCondtion = appendLock.newCondition(); // 追加日志时唤醒flw
+    private          Lock            voteLock       = new ReentrantLock(); // 投票选举时的锁
     private          Thread          raftThread     = new Thread(new RaftMainLoop());// Raft的主线程
 
     /**
@@ -99,8 +101,7 @@ public class Raft implements InitializingBean {
             String[] hostConfigs = config.split(":");
             Peer peer = new Peer(hostConfigs[0], Integer.valueOf(hostConfigs[1]), Integer.valueOf(hostConfigs[2]));
             if (port != peer.getPort()) {
-                peers[index] = peer;
-                index++;
+                peers[index++] = peer;
             } else {
                 currentPeer = peer;
             }
@@ -116,12 +117,37 @@ public class Raft implements InitializingBean {
      * @param request 选举请求参数
      */
     public VoteResponse requestForVote(VoteRequest request) {
-        VoteResponse voteResponse = new VoteResponse();
-        voteResponse.setVoteGranted(Boolean.FALSE);
-        voteResponse.setTerm(currentTerm);
-        if (request.getTerm() > currentTerm) {
+        try {
+            log.info("vote request current node term:{} votedFor:[{}]", currentTerm, votedFor);
+            log.info("vote request candidater node request param term:{} , candidateId:{} ", request.getTerm(), request.getCandidateId());
+            VoteResponse voteResponse = new VoteResponse(currentTerm, Boolean.FALSE);
+            // 该节点参与其他线程投票选举,返回
+            if (!voteLock.tryLock()) {
+                return voteResponse;
+            }
+
+            // 选举节点任期号没有自己新
+            if (request.getTerm() < currentTerm) {
+                return voteResponse;
+            }
+
+            // 当前节点没有投票或投票的是选举节点
             if ((votedFor == null || votedFor == request.getCandidateId())) {
-                // 判断日志 是否一样新 TODO 待修改
+                // 判断日志 是否一样新
+
+                // 当前节点日志条目不为空
+                if (!CollectionUtils.isEmpty(logEntrys)) {
+                    LogEntry currentLastLogEntry = logEntrys.get(logEntrys.size() - 1);
+                    // cd lastTerm大于日志条目最后entry的term
+                    if (currentLastLogEntry.getTerm() > request.getLastTerm()) {
+                        return voteResponse;
+                    }
+
+                    // cd term >= currentTerm ,cd lastIndex大于日志条目最后entry的index
+                    if (currentLastLogEntry.getIndex() > request.getLastIndex()) {
+                        return voteResponse;
+                    }
+                }
                 voteResponse.setVoteGranted(Boolean.TRUE);
                 /**
                  * 修改节点状态为flw
@@ -132,8 +158,10 @@ public class Raft implements InitializingBean {
                 raftState = RaftStateEnum.Follower;
                 raftThread.interrupt();
             }
+            return voteResponse;
+        } finally {
+            voteLock.unlock();
         }
-        return voteResponse;
     }
 
     /**
@@ -158,19 +186,20 @@ public class Raft implements InitializingBean {
         @Override
         public void run() {
             for (; ; ) {
-                log.info("\n========================================");
-                log.info("当前节点term:{},leaderId:{},raftState:{}", currentTerm, votedFor, raftState.getCode());
-
+                log.info("\n==============================================================  start ===============================================================================");
+                log.info("current node term:{}  votedFor:{}  raftState:{} , peer:{} ", currentTerm, votedFor, raftState.getCode(), GsonUtils.toJson(currentPeer));
                 if (raftState == RaftStateEnum.Follower) {
                     int heartbeatWaitTime = random.nextInt(heartBeatTick) + heartBeatTick;
-                    log.info("flw heartbeatWaitTime:{}", heartbeatWaitTime + "ms");
+                    log.info("current node heartbeatTime:{} ", heartbeatWaitTime + "ms");
                     try {
                         TimeUnit.MILLISECONDS.sleep(heartbeatWaitTime);
                         if (!flag) {
                             // 未接收append 等待超时
+                            log.info("current node heartbeatTime timeout, become candidater ");
                             raftState = RaftStateEnum.Candidater;
                         }
                     } catch (InterruptedException e) {
+                        log.info("current node receive leader append reset heartbeatTime");
                         continue;
                     }
 
@@ -209,7 +238,6 @@ public class Raft implements InitializingBean {
                             String requestParam = GsonUtils.toJson(voteRequest);
                             String resultStr = HttpClientUtil.restPost(url, requestParam);
                             if (!Objects.isNull(resultStr)) {
-                                log.info("cd选举请求节点:{},请求参数:{},响应信息:{}", host, requestParam, resultStr);
                                 Result result = GsonUtils.fromJson(resultStr, Result.class);
                                 if (result.getCode() == 0) {
                                     // 请求成功
@@ -225,32 +253,32 @@ public class Raft implements InitializingBean {
                     }
 
                     // 开始投票请求
-                    log.info("cd开始选举");
                     for (Runnable requestForVoteThread : requestForVoteThreads) {
                         pool.submit(requestForVoteThread);
                     }
                     try {
                         // 选举超时时间
                         int electionTime = random.nextInt(Raft.this.electionTime) + Raft.this.electionTime;
-                        log.info("cd electionTime:{}", electionTime + "ms");
+                        log.info("current node start election ,term:{} election time: {} ", currentTerm, electionTime + "ms");
                         countDownLatch.await(electionTime, TimeUnit.MILLISECONDS);
                         if (countDownLatch.getCount() == 0) {
                             //  如果接收到大多数服务器的选票，那么就变成领导人
-                            log.info("选举成功");
+                            log.info("election successful become leader");
                             raftState = RaftStateEnum.Leader;
                         } else {
                             // 如果选举过程超时，再次发起一轮选举
-                            log.info("选举超时,重新选举");
+                            log.info("election timeout , start next election");
                         }
                     } catch (InterruptedException e) {
                         // 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
-                        log.info("找到新的leader");
+                        log.info("find new leader become follower, leaderId:{}", votedFor);
                         raftState = RaftStateEnum.Follower;
                     }
 
                 } else {
                     //Leader
-                    log.info("成为leader");
+                    log.info("current node become leader");
+                    log.info("current node start append request");
                     // TODO 发送append请求
                     try {
                         TimeUnit.MINUTES.sleep(10);
