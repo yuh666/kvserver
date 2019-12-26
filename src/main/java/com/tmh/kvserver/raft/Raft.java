@@ -74,9 +74,6 @@ public class Raft implements InitializingBean {
     @Autowired
     private StateMachine stateMachine; // 状态机
 
-    @Value(value = "${server.peers}")
-    private String serverPeers;
-
     @Override
     public void afterPropertiesSet() throws Exception {
         // TODO: 1.读配置文件 初始化peers 2.初始化各种Index
@@ -88,27 +85,28 @@ public class Raft implements InitializingBean {
      * 初始化其他节点信息
      */
     private void initPeers() {
-        Properties properties = System.getProperties();
-        Object port = properties.get("server.port");
-        if (port == null) {
+        String serverPeers = System.getProperty("server.peers");
+        String serverPort = System.getProperty("server.port");
+        if (StringUtils.isEmpty(serverPort)) {
             throw new IllegalArgumentException("server.port must not null, -Dserver.port");
         }
         if (StringUtils.isEmpty(serverPeers)) {
-            throw new IllegalArgumentException("server.peers must not null");
+            throw new IllegalArgumentException("server.peers must not null, -Dserver.peers");
         }
         String[] configPeers = serverPeers.split(",");
         this.peers = new Peer[configPeers.length - 1];
-        AtomicInteger index = new AtomicInteger(0);
-        Arrays.asList(configPeers).forEach(server -> {
-            String[] hostConfigs = server.split(":");
+        int index = 0;
+        int port = Integer.parseInt(serverPort);
+        for (String config : configPeers) {
+            String[] hostConfigs = config.split(":");
             Peer peer = new Peer(hostConfigs[0], Integer.valueOf(hostConfigs[1]), Integer.valueOf(hostConfigs[2]));
-            if (!server.contains(port.toString())) {
-                peers[index.get()] = peer;
-                index.getAndIncrement();
+            if (port != peer.getPort()) {
+                peers[index] = peer;
+                index++;
             } else {
                 currentPeer = peer;
             }
-        });
+        }
         log.info("当前服务端口号:{},其他节点配置信息:{}", port, peers);
     }
 

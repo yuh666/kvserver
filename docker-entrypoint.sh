@@ -12,4 +12,4 @@ if  [ ! -n "$serverPeers" ] ;then
 fi
 
 
-exec /usr/bin/java -jar -Dserver.port=$serverPort -Dserver.peers=$serverPeers /kvserver/kvserver-0.0.1-SNAPSHOT.jar
+exec /usr/bin/java -jar -Dserver.port=$serverPort -Dserver.peers=$serverPeers kvserver-0.0.1-SNAPSHOT.jar
