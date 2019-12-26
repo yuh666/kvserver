@@ -1,0 +1,26 @@
+version: "2.0"
+services:
+  kvserver1:
+    image: kvserver:latest
+    container_name: kvserver_8081
+    network_mode: host
+    ipc: host
+    environment:
+      - "serverPort=8081"
+      - "serverPeers=localhost:8081:1,localhost:8082:2,localhost:8083:3"
+  kvserver2:
+    image: kvserver:latest
+    container_name: kvserver_8082
+    network_mode: host
+    ipc: host
+    environment:
+      - "serverPort=8082"
+      - "serverPeers=localhost:8081:1,localhost:8082:2,localhost:8083:3"
+  kvserver3:
+    image: kvserver:latest
+    container_name: kvserver_8083
+    network_mode: host
+    ipc: host
+    environment:
+      - "serverPort=8082"
+      - "serverPeers=localhost:8081:1,localhost:8082:2,localhost:8083:3"

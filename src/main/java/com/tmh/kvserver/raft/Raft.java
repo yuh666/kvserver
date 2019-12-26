@@ -71,6 +71,12 @@ public class Raft implements InitializingBean {
      */
     private int electionTime = 15 * 1000;
 
+    @Value("${server.port}")
+    private String serverPort;
+
+    @Value("${server.peers}")
+    private String serverPeers;
+
     @Autowired
     private StateMachine stateMachine; // 状态机
 
@@ -85,14 +91,6 @@ public class Raft implements InitializingBean {
      * 初始化其他节点信息
      */
     private void initPeers() {
-        String serverPeers = System.getProperty("server.peers");
-        String serverPort = System.getProperty("server.port");
-        if (StringUtils.isEmpty(serverPort)) {
-            throw new IllegalArgumentException("server.port must not null, -Dserver.port");
-        }
-        if (StringUtils.isEmpty(serverPeers)) {
-            throw new IllegalArgumentException("server.peers must not null, -Dserver.peers");
-        }
         String[] configPeers = serverPeers.split(",");
         this.peers = new Peer[configPeers.length - 1];
         int index = 0;
