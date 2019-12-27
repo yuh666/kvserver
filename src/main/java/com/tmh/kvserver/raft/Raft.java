@@ -194,18 +194,20 @@ public class Raft implements InitializingBean {
                 return response;
             }
 
+            log.info("node receive not empty rpc request param:{}", GsonUtils.toJson(request));
             // 3.判断prevLogIndex是否在logEntrys中存在
             // 如果日志在 prevLogIndex 位置处的日志条目的任期号和 prevLogTerm 不匹配，则返回 false
             int prevLogIndex = request.getPrevLogIndex();
             if (prevLogIndex != 0 && this.getLastIndex() != 0) {
                 LogEntry prevLogEntry;
-                if ((prevLogEntry = this.getLog(prevLogIndex)) != null) {
+                if ((prevLogEntry = this.getLog(prevLogIndex - 1)) != null) {
                     // 存在 比较任期号
                     if (prevLogEntry.getTerm() != request.getTerm()) {
                         // index相同任期号不同
                         return response;
                     }
                 } else {
+                    log.info("node not exist prevLogIndex log need reduce nextIndex ");
                     // 减少nextIndex
                     return response;
                 }
@@ -347,8 +349,8 @@ public class Raft implements InitializingBean {
         }
 
         // 大多数节点复制成功则响应客户端
-        if (successCount > this.peers.length / 2) {
-            log.info("leader append log receive majority follower response ,apply to log and stateMachine");
+        if (successCount >= this.peers.length / 2) {
+            log.info("leader append log receive majority follower response ,apply log to stateMachine");
             // 将logEntry应用到状态机
             // 更新commitIndex和lastApplied
             stateMachine.apply(logEntry);
@@ -401,13 +403,15 @@ public class Raft implements InitializingBean {
                     request.setPrevLogIndex(logEntries.get(0).getIndex());
                     request.setEntries(logEntries);
 
+                    log.info("request append log {} => {} request:{} ", currentPeer.getPeerId(), peer.getPeerId(), GsonUtils.toJson(request));
                     String resultStr = HttpClientUtil.restPost(url, GsonUtils.toJson(request));
+                    log.info("request append log reply {} => {} resultStr:{} ", peer.getPeerId(), currentPeer.getPeerId(), GsonUtils.toJson(resultStr));
                     if (resultStr != null) {
                         Result result = GsonUtils.fromJson(resultStr, Result.class);
                         if (result.getCode() == ErrorCodeEnum.SUCCESS.getCode()) {
                             AppendEntriesResponse appendResponse = GsonUtils.fromJson(result.getBody().toString(), AppendEntriesResponse.class);
                             if (appendResponse.isSuccess()) {
-                                log.info("append follower success ,follower peer:{} logEntries:{} ", GsonUtils.toJson(peer), GsonUtils.toJson(logEntries));
+                                log.info(" {} node replication success update nextIndexs and matchIndexs ", peer.getBasePath());
                                 // 更新nextIndexs和matchIndexs
                                 nextIndexs.put(peer, newLogEntry.getIndex() + 1);
                                 matchIndexs.put(peer, newLogEntry.getIndex());
@@ -490,7 +494,7 @@ public class Raft implements InitializingBean {
                 raftState = RaftStateEnum.Candidater;
             }
         } catch (InterruptedException e) {
-            log.info("node receive leader header request reset heartbeatTime");
+            log.info("node receive leader  request reset heartbeatTime");
             // 重置标志位 开始下一轮心跳
             flag = false;
         }
