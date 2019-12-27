@@ -40,8 +40,17 @@ public class Result<T> {
         this.body = body;
     }
 
+    public Result(int code, String msg) {
+        this.code = code;
+        this.msg = msg;
+    }
+
     public static <T> Result<T> success(T body) {
-        return new Result<T>(ErrorCodeEnum.SUCCESS.getCode(), "ok", body);
+        return new Result<T>(ErrorCodeEnum.SUCCESS.getCode(), ErrorCodeEnum.SUCCESS.getMessage(), body);
+    }
+
+    public static <T> Result<T> success() {
+        return new Result<>(ErrorCodeEnum.SUCCESS.getCode(), ErrorCodeEnum.SUCCESS.getMessage());
     }
 
     public static <T> Result<T> fail(int code, String msg) {

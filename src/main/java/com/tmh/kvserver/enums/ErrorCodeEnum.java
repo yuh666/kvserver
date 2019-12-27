@@ -12,9 +12,9 @@ import lombok.Getter;
 @AllArgsConstructor
 public enum ErrorCodeEnum {
 
-    SUCCESS(200, "成功"),
+    SUCCESS(200, "ok"),
 
-    FAIl(500, "失败"),
+    FAIl(500, "fail"),
     ;
 
     @Getter

@@ -1,5 +1,6 @@
 package com.tmh.kvserver.raft;
 
+import com.tmh.kvserver.constants.RequestPathConstant;
 import com.tmh.kvserver.enums.ErrorCodeEnum;
 import com.tmh.kvserver.httpserver.Result;
 import com.tmh.kvserver.raft.bean.*;
@@ -13,15 +14,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
-import java.util.Random;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -43,9 +37,9 @@ public class Raft implements InitializingBean {
     private int commitIndex; // 提交位置
     private int lastApplied;// 最后应用的位置
 
-    // Volitale state on leader
-    private int[] nextIndex; // 将要发送给每个节点的下一个entry index
-    private int[] matchIndex; // 每个节点的接受的最大的index
+    // Volitale state on leader TODO 实际为为数组为了方便
+    private Map<Peer, Integer> nextIndexs; // 将要发送给每个节点的下一个entry index
+    private Map<Peer, Integer> matchIndexs; // 每个节点的接受的最大的index
 
     // Non-Paper Fields
     private volatile RaftStateEnum   raftState; // 节点角色
@@ -219,9 +213,9 @@ public class Raft implements InitializingBean {
 
             // 4.解决日志冲突prevLogIndex到logEntrys中prevLogIndex之后的数据删除
             // 如果已经存在的日志条目和新的产生冲突（索引值相同但是任期号不同），删除这一条和之后所有的
-            if (prevLogIndex != logEntrys.size() - 1) {
+            if (prevLogIndex < logEntrys.size() - 1) {
                 // 当前 flw prevLogIndex之后存在log 比较prevLogIndex+1的term和append entries[0] term
-                if (this.getLogTerm(prevLogIndex + 1) != leaderEntries.get(0).getTerm()) {
+                if (this.getLogTerm(prevLogIndex) != leaderEntries.get(0).getTerm()) {
                     // 索引值相同,term不同
                     // 跟ld匹配的日志
                     List<LogEntry> newLogEntrys = logEntrys.subList(0, prevLogIndex);
@@ -266,6 +260,196 @@ public class Raft implements InitializingBean {
         }
 
     }
+
+    /**
+     * 处理客户端请求
+     *
+     * @param command 操作
+     * @return 结果
+     */
+    public synchronized Result handlerClientRequest(Command command) {
+        Result<String> response = Result.success();
+        // 是否重定向
+        if (!this.isLeader()) {
+            // 重定向 请求leader
+            log.info("node is not leader,redirect to {}", this.getLeaderPeer().getBasePath());
+            return redirect(command);
+        }
+
+        // 处理客户端请求
+        if (command.getCommandType() == CommandTypeEnum.GET.getCode()) {
+            String key = command.getKey();
+            log.info("node is leader , handler get request key:{} ", key);
+            response.setBody(stateMachine.get(key));
+            return response;
+        }
+
+        // 写本地日志 预提交(等待其他节点复制结果)
+        this.write(command);
+        log.info("logEntry {} write leader local logEntrys success", GsonUtils.toJson(this.getLastLog()));
+
+        // 复制到其他节点,大多数节点复制成功 写入到状态机中
+        LogEntry logEntry = new LogEntry(this.getLastIndex(), this.currentTerm, command);
+
+        List<Future<Boolean>> futureList = new ArrayList<>();
+        log.info("start send replication log append request");
+        for (Peer peer : peers) {
+            futureList.add(this.replication(peer, logEntry));
+        }
+
+        List<Boolean> resultList = new ArrayList<>();
+        CountDownLatch countDownLatch = new CountDownLatch(peers.length);
+        // 获取future中执行结果
+        for (Future<Boolean> future : futureList) {
+            pool.submit(() -> {
+                try {
+                    resultList.add(future.get(3000, TimeUnit.MILLISECONDS));
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                    resultList.add(false);
+                } catch (ExecutionException e) {
+                    e.printStackTrace();
+                    resultList.add(false);
+                } catch (TimeoutException e) {
+                    e.printStackTrace();
+                    resultList.add(false);
+                } finally {
+                    countDownLatch.countDown();
+                }
+            });
+        }
+
+        try {
+            countDownLatch.await(4000, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        log.info("leader send append log result:{}", resultList);
+        // 判断是否是大多数节点复制完成
+        int successCount = 0;
+        for (Boolean status : resultList) {
+            if (status) {
+                successCount++;
+            }
+        }
+
+        /**
+         * 如果存在一个满足N > commitIndex的 N，并且大多数的matchIndex[i] ≥ N成立，
+         * 并且log[N].term == currentTerm成立，那么令 commitIndex 等于这个 N （5.3 和 5.4 节）
+         */
+        List<Integer> matchIndexList = new ArrayList<>(matchIndexs.values());
+        Collections.sort(matchIndexList);
+        Integer N = matchIndexList.get(matchIndexList.size() / 2);
+        if (N > commitIndex && logEntrys.get(N).getTerm() == currentTerm) {
+            log.info("exist N update commitIndex");
+            commitIndex = N;
+        }
+
+        // 大多数节点复制成功则响应客户端
+        if (successCount > this.peers.length / 2) {
+            log.info("leader append log receive majority follower response ,apply to log and stateMachine");
+            // 将logEntry应用到状态机
+            // 更新commitIndex和lastApplied
+            stateMachine.apply(logEntry);
+            commitIndex = logEntry.getIndex();
+            lastApplied = commitIndex;
+        } else {
+            // 复制失败 移除logEntry
+            log.info("leader append log fail delete this logEntry");
+            logEntrys.remove(logEntry.getIndex());
+            response.setCode(ErrorCodeEnum.FAIl.getCode());
+            response.setMsg(ErrorCodeEnum.FAIl.getMessage());
+        }
+        return response;
+    }
+
+    /**
+     * 复制日志
+     *
+     * @param peer
+     * @param newLogEntry
+     * @return
+     */
+    private Future<Boolean> replication(Peer peer, LogEntry newLogEntry) {
+        return pool.submit(new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                long start = System.currentTimeMillis();
+                long end = start;
+                // 20秒重试
+                while (end - start < 20 * 1000) {
+                    String url = peer.getBasePath() + RequestPathConstant.SERVER_APPEND_ENTRIES_PATH;
+                    AppendEntriesRequest request = new AppendEntriesRequest();
+                    request.setLeaderId(currentPeer.getPeerId());
+                    request.setTerm(currentTerm);
+                    request.setLeaderCommit(commitIndex);
+
+                    // 日志信息
+                    request.setEntries(Collections.singletonList(newLogEntry));
+                    Integer nextIndex = nextIndexs.get(peer);
+                    List<LogEntry> logEntries = new ArrayList<>();
+                    if (newLogEntry.getIndex() >= nextIndex) {
+                        // 发送日志[nextIndex->newLogEntry.index]
+                        for (int i = nextIndex; i <= newLogEntry.getIndex(); i++) {
+                            logEntries.add(logEntrys.get(nextIndex));
+                        }
+                    } else {
+                        logEntries.add(newLogEntry);
+                    }
+                    // logEntries中最小日志
+                    request.setPrevLogIndex(logEntries.get(0).getIndex());
+                    request.setEntries(logEntries);
+
+                    String resultStr = HttpClientUtil.restPost(url, GsonUtils.toJson(request));
+                    if (resultStr != null) {
+                        Result result = GsonUtils.fromJson(resultStr, Result.class);
+                        if (result.getCode() == ErrorCodeEnum.SUCCESS.getCode()) {
+                            AppendEntriesResponse appendResponse = GsonUtils.fromJson(result.getBody().toString(), AppendEntriesResponse.class);
+                            if (appendResponse.isSuccess()) {
+                                log.info("append follower success ,follower peer:{} logEntries:{} ", GsonUtils.toJson(peer), GsonUtils.toJson(logEntries));
+                                // 更新nextIndexs和matchIndexs
+                                nextIndexs.put(peer, newLogEntry.getIndex() + 1);
+                                matchIndexs.put(peer, newLogEntry.getIndex());
+                                return true;
+                            } else {
+                                // append fail
+                                int flwTerm = appendResponse.getTerm();
+                                // flwTerm 大于自己 自己变为flw
+                                if (flwTerm > currentTerm) {
+                                    raftState = RaftStateEnum.Follower;
+                                    currentTerm = flwTerm;
+                                    return false;
+                                }
+
+                                // 减小nextIndex
+                                nextIndexs.put(peer, nextIndex - 1);
+                                return false;
+                            }
+                        }
+                    }
+                    end = System.currentTimeMillis();
+                }
+                // 超时
+                return false;
+            }
+        });
+    }
+
+    /**
+     * 重定向请求leader
+     *
+     * @param command 操作
+     * @return 结果
+     */
+    private Result redirect(Command command) {
+        String resultStr = HttpClientUtil.restPost(this.getLeaderPeer().getBasePath() + CommandTypeEnum.getPathByCode(command.getCommandType()), GsonUtils.toJson(command));
+        if (resultStr == null) {
+            return Result.fail(ErrorCodeEnum.FAIl.getCode(), ErrorCodeEnum.FAIl.getMessage());
+        }
+        return GsonUtils.fromJson(resultStr, Result.class);
+    }
+
 
     private class RaftMainLoop implements Runnable {
 
@@ -350,7 +534,7 @@ public class Raft implements InitializingBean {
                 // 如果接收到大多数服务器的选票，那么就变成领导人
                 log.info("election successful become leader");
                 raftState = RaftStateEnum.Leader;
-                // 充值matchIndex 和 nextIndex
+                // 充值matchIndex 和 nextIndexs
                 resetLeaderIndex();
             } else {
                 // 如果选举过程超时，再次发起一轮选举
@@ -370,8 +554,7 @@ public class Raft implements InitializingBean {
         List<Runnable> heartbeatThreads = new ArrayList<>();
         for (Peer peer : peers) {
             Runnable runnable = () -> {
-                String host = peer.getHost() + ":" + peer.getPort();
-                String url = "http://" + host + "/raft/append-entries";
+                String url = peer.getBasePath() + "/raft/append-entries";
                 AppendEntriesRequest appendRequest = new AppendEntriesRequest();
                 appendRequest.setTerm(currentTerm);
                 appendRequest.setLeaderId(currentPeer.getPeerId());
@@ -416,13 +599,16 @@ public class Raft implements InitializingBean {
     }
 
     private void resetLeaderIndex() {
-        this.matchIndex = new int[this.peers.length];
-        this.nextIndex = new int[this.peers.length];
-        Arrays.fill(nextIndex, getLastIndex() + 1);
+        this.matchIndexs = new HashMap<>(this.peers.length);
+        this.nextIndexs = new HashMap<>(this.peers.length);
+        for (Peer peer : this.peers) {
+            nextIndexs.put(peer, getLastIndex() + 1);
+            matchIndexs.put(peer, getLastIndex());
+        }
     }
 
     public boolean isLeader() {
-        return this.currentTerm == RaftStateEnum.Leader.getCode();
+        return this.raftState.getCode() == RaftStateEnum.Leader.getCode();
     }
 
     private int getLastIndex() {
@@ -431,6 +617,10 @@ public class Raft implements InitializingBean {
 
     private int getLastTerm() {
         return this.logEntrys.get(this.logEntrys.size() - 1).getTerm();
+    }
+
+    private LogEntry getLastLog() {
+        return this.logEntrys.get(this.logEntrys.size() - 1);
     }
 
     private LogEntry getLog(int index) {
@@ -443,5 +633,22 @@ public class Raft implements InitializingBean {
 
     private int getLogIndex(int index) {
         return logEntrys.get(index).getIndex();
+    }
+
+    private Peer getLeaderPeer() {
+        for (Peer peer : peers) {
+            if (peer.getPeerId() == votedFor) {
+                return peer;
+            }
+        }
+        return null;
+    }
+
+    private void write(Command command) {
+        LogEntry logEntry = new LogEntry();
+        logEntry.setCommand(command);
+        logEntry.setIndex(getLastIndex() + 1);
+        logEntry.setTerm(currentTerm);
+        logEntrys.add(logEntry);
     }
 }
