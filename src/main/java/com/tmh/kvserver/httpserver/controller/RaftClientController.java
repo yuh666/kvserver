@@ -24,9 +24,9 @@ public class RaftClientController {
 
     @RequestMapping("/request-vote")
     @ResponseBody
-    public Result requestForVote(@RequestBody VoteRequest request) {
-        //TODO: 交给Raft处理
-        return Result.success(raft.requestForVote(request));
+    public Object requestForVote(@RequestBody VoteRequest request) {
+        //内部不走包装
+        return raft.requestForVote(request);
     }
 
 

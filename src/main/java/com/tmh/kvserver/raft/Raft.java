@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Random;
@@ -33,10 +34,10 @@ import java.util.concurrent.locks.ReentrantLock;
 public class Raft implements InitializingBean {
 
     // Persistent state on all servers
-    private int            currentTerm; // 当前term
-    private Integer        votedFor; // 给谁投票
-    private List<LogEntry> logEntrys = new ArrayList<>();
-    private Peer           currentPeer; // 当前节点信息
+    private int currentTerm; // 当前term
+    private Integer votedFor; // 给谁投票
+    private List<LogEntry> logEntrys;
+    private Peer currentPeer; // 当前节点信息
 
     // Volitale state on all servers
     private int commitIndex; // 提交位置
@@ -47,13 +48,13 @@ public class Raft implements InitializingBean {
     private int[] matchIndex; // 每个节点的接受的最大的index
 
     // Non-Paper Fields
-    private volatile RaftStateEnum   raftState      = RaftStateEnum.Follower; // 节点角色
-    private          ExecutorService pool           = Executors.newFixedThreadPool(100);
-    private          Peer[]          peers; // 其他节点
-    private          Lock            appendLock     = new ReentrantLock(); // 追加日志时的锁
-    private          Condition       appendCondtion = appendLock.newCondition(); // 追加日志时唤醒flw
-    private          Lock            voteLock       = new ReentrantLock(); // 投票选举时的锁
-    private          Thread          raftThread     = new Thread(new RaftMainLoop());// Raft的主线程
+    private volatile RaftStateEnum raftState; // 节点角色
+    private ExecutorService pool = Executors.newFixedThreadPool(100);
+    private Peer[] peers; // 其他节点
+    private Lock appendLock = new ReentrantLock(); // 追加日志时的锁
+    private Condition appendCondtion = appendLock.newCondition(); // 追加日志时唤醒flw
+    private Lock voteLock = new ReentrantLock(); // 投票选举时的锁
+    private Thread raftThread = new Thread(new RaftMainLoop());// Raft的主线程
 
     /**
      * 随机函数
@@ -88,6 +89,7 @@ public class Raft implements InitializingBean {
     public void afterPropertiesSet() throws Exception {
         // TODO: 1.读配置文件 初始化peers 2.初始化各种Index
         initPeers();
+        initInnerState();
         raftThread.start();
     }
 
@@ -111,52 +113,48 @@ public class Raft implements InitializingBean {
         log.info("当前服务端口号:{},其他节点配置信息:{}", port, peers);
     }
 
+    private void initInnerState() {
+        this.raftState = RaftStateEnum.Follower;
+        this.currentTerm = 0;
+        this.logEntrys = new ArrayList<>();
+        logEntrys.add(new LogEntry(0, 0, null));// 虚拟节点
+    }
+
     /**
-     * 接收选举请求
-     * 1.如果term < currentTerm返回 false
-     * 2.如果 votedFor 为空或者为 candidateId，并且候选人的日志至少和自己一样新，那么就投票给他
+     * 接收选举请求 1.如果term < currentTerm返回 false 2.如果 votedFor 为空或者为
+     * candidateId，并且候选人的日志至少和自己一样新，那么就投票给他
      *
      * @param request 选举请求参数
      */
     public VoteResponse requestForVote(VoteRequest request) {
         try {
             log.info("vote request node term:{} votedFor:[{}]", currentTerm, votedFor);
-            log.info("vote request candidater node request param term:{} , candidateId:{} ", request.getTerm(), request.getCandidateId());
+            log.info("vote request candidater node request param term:{} , candidateId:{} ", request.getTerm(),
+                    request.getCandidateId());
             VoteResponse voteResponse = new VoteResponse(currentTerm, Boolean.FALSE);
-            // 该节点参与其他线程投票选举,返回
-            if (!voteLock.tryLock()) {
-                return voteResponse;
-            }
-
+            // 该节点参与其他线程投票选举,等待
+            voteLock.lock();
             // 选举节点任期号没有自己新
             if (request.getTerm() < currentTerm) {
                 return voteResponse;
             }
 
-            // 当前节点没有投票或投票的是选举节点
-            if ((votedFor == null || votedFor == request.getCandidateId())) {
-                // 判断日志 是否一样新
+            // 判断日志是否是更新
+            boolean upToDate = false;
+            if (request.getLastTerm() > getLastTerm()
+                    || (request.getLastTerm() == getLastTerm() && request.getLastIndex() >= getLastIndex())) {
+                upToDate = true;
+            }
 
-                // 当前节点日志条目不为空
-                if (!CollectionUtils.isEmpty(logEntrys)) {
-                    LogEntry currentLastLogEntry = logEntrys.get(logEntrys.size() - 1);
-                    // cd lastTerm大于日志条目最后entry的term
-                    if (currentLastLogEntry.getTerm() > request.getLastTerm()) {
-                        return voteResponse;
-                    }
-
-                    // cd term >= currentTerm ,cd lastIndex大于日志条目最后entry的index
-                    if (currentLastLogEntry.getIndex() > request.getLastIndex()) {
-                        return voteResponse;
-                    }
-                }
-                voteResponse.setVoteGranted(Boolean.TRUE);
+            // 为空 or 就是本节点 && 日志更新
+            if ((votedFor == null || votedFor == request.getCandidateId()) && upToDate) {
                 /**
-                 * 修改节点状态为flw
-                 * 修改votedFor为cd
-                 * 如果当前节点参与选举则唤醒
+                 * 投票 修改节点状态为flw 修改votedFor为cd 如果当前节点参与选举则唤醒
                  */
+                this.currentTerm = request.getTerm();
                 votedFor = request.getCandidateId();
+                voteResponse.setVoteGranted(true);
+                voteResponse.setTerm(this.currentTerm);
                 raftState = RaftStateEnum.Follower;
                 raftThread.interrupt();
             }
@@ -170,11 +168,10 @@ public class Raft implements InitializingBean {
     /**
      * 接收append请求
      * <p>
-     * 如果 term < currentTerm 就返回 false （5.1 节）
-     * 如果日志在 prevLogIndex 位置处的日志条目的任期号和 prevLogTerm 不匹配，则返回 false （5.3 节）
-     * 如果已经存在的日志条目和新的产生冲突（索引值相同但是任期号不同），删除这一条和之后所有的 （5.3 节）
-     * 附加日志中尚未存在的任何新条目
-     * 如果 leaderCommit > commitIndex，令 commitIndex 等于 leaderCommit 和 新日志条目索引值中较小的一个
+     * 如果 term < currentTerm 就返回 false （5.1 节） 如果日志在 prevLogIndex 位置处的日志条目的任期号和
+     * prevLogTerm 不匹配，则返回 false （5.3 节）
+     * 如果已经存在的日志条目和新的产生冲突（索引值相同但是任期号不同），删除这一条和之后所有的 （5.3 节） 附加日志中尚未存在的任何新条目 如果
+     * leaderCommit > commitIndex，令 commitIndex 等于 leaderCommit 和 新日志条目索引值中较小的一个
      *
      * @param request
      */
@@ -189,7 +186,8 @@ public class Raft implements InitializingBean {
                 return response;
             }
 
-            log.info("node receive leader append request node term:{} , leader term :{} ,node become follower", currentTerm, request.getTerm());
+            log.info("node receive leader append request node term:{} , leader term :{} ,node become follower",
+                    currentTerm, request.getTerm());
             raftState = RaftStateEnum.Follower;
             currentTerm = request.getTerm();
             votedFor = request.getLeaderId();
@@ -282,150 +280,166 @@ public class Raft implements InitializingBean {
 
         @Override
         public void run() {
-            for (; ; ) {
-                log.info("\n==============================================================  start ===============================================================================");
-                log.info("node term:{}  votedFor:{}  raftState:{} , peer:{} ", currentTerm, votedFor, raftState.getCode(), GsonUtils.toJson(currentPeer));
+            for (;;) {
+                log.info(
+                        "\n==============================================================  loop start ===============================================================================");
+                log.info("node term:{}  votedFor:{}  raftState:{} , peer:{} ", currentTerm, votedFor,
+                        raftState.getCode(), GsonUtils.toJson(currentPeer));
                 if (raftState == RaftStateEnum.Follower) {
-                    int heartbeatWaitTime = random.nextInt(heartBeatTick) + heartBeatTick;
-                    log.info("node heartbeatTime:{} ", heartbeatWaitTime + "ms");
-                    try {
-                        TimeUnit.MILLISECONDS.sleep(heartbeatWaitTime);
-                        if (!flag) {
-                            // 未接收append 等待超时
-                            log.info("node heartbeatTime timeout, become candidater ");
-                            raftState = RaftStateEnum.Candidater;
-                        }
-                    } catch (InterruptedException e) {
-                        log.info("node receive leader header request reset heartbeatTime");
-                        // 重置标志位 开始下一轮心跳
-                        flag = false;
-                        continue;
-                    }
-
-
+                    doAsFollower();
                 } else if (raftState == RaftStateEnum.Candidater) {
-                    // Candidater
-                    /**
-                     * 在转变成候选人后就立即开始选举过程
-                     * 自增当前的任期号（currentTerm）
-                     * 给自己投票
-                     * 重置选举超时计时器
-                     * 发送请求投票的 RPC 给其他所有服务器
-                     */
-                    ++currentTerm;
-                    votedFor = currentPeer.getPeerId();
-
-                    List<Runnable> requestForVoteThreads = new ArrayList<>();
-                    CountDownLatch countDownLatch = new CountDownLatch((peers.length + 1) >> 1);
-                    for (Peer peer : peers) {
-                        Runnable runnable = () -> {
-                            String host = peer.getHost() + ":" + peer.getPort();
-                            String url = "http://" + host + "/raft/request-vote";
-                            VoteRequest voteRequest = new VoteRequest();
-                            voteRequest.setTerm(currentTerm);
-                            voteRequest.setCandidateId(peer.getPeerId());
-                            // 日志条目
-                            if (CollectionUtils.isEmpty(logEntrys)) {
-                                voteRequest.setLastTerm(currentTerm);
-                                voteRequest.setLastIndex(0);
-                            } else {
-                                LogEntry lastLogEntry = logEntrys.get(logEntrys.size() - 1);
-                                voteRequest.setLastTerm(lastLogEntry.getTerm());
-                                voteRequest.setLastIndex(lastLogEntry.getIndex());
-                            }
-
-                            String requestParam = GsonUtils.toJson(voteRequest);
-                            String resultStr = HttpClientUtil.restPost(url, requestParam);
-                            if (!Objects.isNull(resultStr)) {
-                                Result result = GsonUtils.fromJson(resultStr, Result.class);
-                                if (result.getCode() == ErrorCodeEnum.SUCCESS.getCode()) {
-                                    // 请求成功
-                                    VoteResponse voteResponse = GsonUtils.fromJson(result.getBody().toString(), VoteResponse.class);
-                                    if (voteResponse.isVoteGranted()) {
-                                        // 投票成功
-                                        countDownLatch.countDown();
-                                    }
-                                }
-                            }
-                        };
-                        requestForVoteThreads.add(runnable);
-                    }
-
-                    // 开始投票请求
-                    for (Runnable requestForVoteThread : requestForVoteThreads) {
-                        pool.submit(requestForVoteThread);
-                    }
-                    try {
-                        // 选举超时时间
-                        int electionTime = random.nextInt(Raft.this.electionTime) + Raft.this.electionTime;
-                        log.info("node start election ,term:{} election time: {} ", currentTerm, electionTime + "ms");
-                        countDownLatch.await(electionTime, TimeUnit.MILLISECONDS);
-                        if (countDownLatch.getCount() == 0) {
-                            //  如果接收到大多数服务器的选票，那么就变成领导人
-                            log.info("election successful become leader");
-                            raftState = RaftStateEnum.Leader;
-                        } else {
-                            // 如果选举过程超时，再次发起一轮选举
-                            log.info("election timeout , start next election");
-                        }
-                    } catch (InterruptedException e) {
-                        // 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
-                        log.info("find new leader become follower, leaderId:{}", votedFor);
-                        raftState = RaftStateEnum.Follower;
-                    }
-
+                    doAsCanditate();
                 } else {
-                    // TODO 发送append请求
-                    //Leader
-                    log.info("node  leader");
-                    List<Runnable> heartbeatThreads = new ArrayList<>();
-                    for (Peer peer : peers) {
-                        Runnable runnable = () -> {
-                            String host = peer.getHost() + ":" + peer.getPort();
-                            String url = "http://" + host + "/raft/append-entries";
-                            AppendEntriesRequest appendRequest = new AppendEntriesRequest();
-                            appendRequest.setTerm(currentTerm);
-                            appendRequest.setLeaderId(currentPeer.getPeerId());
-                            // 心跳 日志空
-                            appendRequest.setEntries(null);
-
-                            String requestParam = GsonUtils.toJson(appendRequest);
-                            String resultStr = HttpClientUtil.restPost(url, requestParam);
-                            if (!Objects.isNull(resultStr)) {
-                                Result result = GsonUtils.fromJson(resultStr, Result.class);
-                                if (result.getCode() == ErrorCodeEnum.SUCCESS.getCode()) {
-                                    // 请求成功
-                                    AppendEntriesResponse appendEntriesResponse = GsonUtils.fromJson(result.getBody().toString(), AppendEntriesResponse.class);
-                                    if (appendEntriesResponse.isSuccess()) {
-                                        // 心跳成功 判断任期号,当前的任期号，用于领导人去更新自己
-                                        if (appendEntriesResponse.getTerm() > currentTerm) {
-                                            log.info("node will become follower,my term:{} response term:{}", currentTerm, appendEntriesResponse.getTerm());
-                                            raftState = RaftStateEnum.Follower;
-                                            votedFor = null;
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                        heartbeatThreads.add(runnable);
-                    }
-
-                    // 开始发送心跳
-                    log.info("node start append request");
-                    for (Runnable requestForVoteThread : heartbeatThreads) {
-                        pool.submit(requestForVoteThread);
-                    }
-
-                    // TODO 时间待修改
-                    try {
-                        Thread.sleep(5000);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
+                    doAsLeader();
                 }
+                log.info(
+                        "\n==============================================================  loop end ===============================================================================");
+                log.info("node term:{}  votedFor:{}  raftState:{} , peer:{} ", currentTerm, votedFor,
+                        raftState.getCode(), GsonUtils.toJson(currentPeer));
             }
         }
 
+    }
+
+    /**
+     * Follower 行为
+     */
+    private void doAsFollower() {
+        int heartbeatWaitTime = random.nextInt(heartBeatTick) + heartBeatTick;
+        log.info("node heartbeatTime:{} ", heartbeatWaitTime + "ms");
+        try {
+            TimeUnit.MILLISECONDS.sleep(heartbeatWaitTime);
+            if (!flag) {
+                // 未接收append 等待超时
+                log.info("node heartbeatTime timeout, become candidater ");
+                raftState = RaftStateEnum.Candidater;
+            }
+        } catch (InterruptedException e) {
+            log.info("node receive leader header request reset heartbeatTime");
+            // 重置标志位 开始下一轮心跳
+            flag = false;
+        }
+    }
+
+    /**
+     * 在转变成候选人后就立即开始选举过程 自增当前的任期号（currentTerm） 给自己投票 重置选举超时计时器 发送请求投票的 RPC 给其他所有服务器
+     */
+    private void doAsCanditate() {
+        ++currentTerm;
+        votedFor = currentPeer.getPeerId();
+        List<Runnable> requestForVoteThreads = new ArrayList<>();
+        CountDownLatch countDownLatch = new CountDownLatch((peers.length + 1) >> 1);
+        for (Peer peer : peers) {
+            Runnable runnable = () -> {
+                // 请其他节点投票
+                VoteRequest voteRequest = new VoteRequest();
+                voteRequest.setTerm(currentTerm);
+                voteRequest.setCandidateId(currentPeer.getPeerId());
+                voteRequest.setLastIndex(getLastIndex());
+                voteRequest.setLastTerm(getLastTerm());
+                VoteResponse response = peer.requestVote(voteRequest);
+                if (response.isVoteGranted()) {
+                    countDownLatch.countDown();
+                }
+            };
+            requestForVoteThreads.add(runnable);
+        }
+
+        // 开始投票请求
+        for (Runnable requestForVoteThread : requestForVoteThreads) {
+            pool.submit(requestForVoteThread);
+        }
+        try {
+            // 选举超时时间
+            int electionTime = random.nextInt(Raft.this.electionTime) + Raft.this.electionTime;
+            log.info("node start election peerId:{},term:{} election time: {} ", currentPeer.getPeerId(), currentTerm,
+                    electionTime + "ms");
+            countDownLatch.await(electionTime, TimeUnit.MILLISECONDS);
+            if (countDownLatch.getCount() == 0) {
+                // 如果接收到大多数服务器的选票，那么就变成领导人
+                log.info("election successful become leader");
+                raftState = RaftStateEnum.Leader;
+                // 充值matchIndex 和 nextIndex
+                resetLeaderIndex();
+            } else {
+                // 如果选举过程超时，再次发起一轮选举
+                log.info("election timeout , start next election");
+            }
+        } catch (InterruptedException e) {
+            // 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
+            log.info("find new leader become follower, leaderId:{}", votedFor);
+            raftState = RaftStateEnum.Follower;
+        }
+    }
+
+    // TODO: 发送append请求
+    // Leader
+    private void doAsLeader() {
+        log.info("node  leader");
+        List<Runnable> heartbeatThreads = new ArrayList<>();
+        for (Peer peer : peers) {
+            Runnable runnable = () -> {
+                String host = peer.getHost() + ":" + peer.getPort();
+                String url = "http://" + host + "/raft/append-entries";
+                AppendEntriesRequest appendRequest = new AppendEntriesRequest();
+                appendRequest.setTerm(currentTerm);
+                appendRequest.setLeaderId(currentPeer.getPeerId());
+                // 心跳 日志空
+                appendRequest.setEntries(null);
+
+                String requestParam = GsonUtils.toJson(appendRequest);
+                String resultStr = HttpClientUtil.restPost(url, requestParam);
+                if (!Objects.isNull(resultStr)) {
+                    Result result = GsonUtils.fromJson(resultStr, Result.class);
+                    if (result.getCode() == ErrorCodeEnum.SUCCESS.getCode()) {
+                        // 请求成功
+                        AppendEntriesResponse appendEntriesResponse = GsonUtils.fromJson(result.getBody().toString(),
+                                AppendEntriesResponse.class);
+                        if (appendEntriesResponse.isSuccess()) {
+                            // 心跳成功 判断任期号,当前的任期号，用于领导人去更新自己
+                            if (appendEntriesResponse.getTerm() > currentTerm) {
+                                log.info("node will become follower,my term:{} response term:{}", currentTerm,
+                                        appendEntriesResponse.getTerm());
+                                raftState = RaftStateEnum.Follower;
+                                votedFor = null;
+                            }
+                        }
+                    }
+                }
+            };
+            heartbeatThreads.add(runnable);
+        }
+
+        // 开始发送心跳
+        log.info("node start append request");
+        for (Runnable requestForVoteThread : heartbeatThreads) {
+            pool.submit(requestForVoteThread);
+        }
+
+        // TODO 时间待修改
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void resetLeaderIndex() {
+        this.matchIndex = new int[this.peers.length];
+        this.nextIndex = new int[this.peers.length];
+        Arrays.fill(nextIndex, getLastIndex() + 1);
+    }
+
+    public boolean isLeader() {
+        return this.currentTerm == RaftStateEnum.Leader.getCode();
+    }
+
+    private int getLastIndex() {
+        return this.logEntrys.get(this.logEntrys.size() - 1).getIndex();
+    }
+
+    private int getLastTerm() {
+        return this.logEntrys.get(this.logEntrys.size() - 1).getTerm();
     }
 
 }
