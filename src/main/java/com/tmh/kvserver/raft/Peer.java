@@ -6,10 +6,7 @@ import com.tmh.kvserver.raft.bean.VoteRequest;
 import com.tmh.kvserver.raft.bean.VoteResponse;
 import com.tmh.kvserver.utils.GsonUtils;
 import com.tmh.kvserver.utils.HttpClientUtil;
-
 import lombok.Data;
-import lombok.ToString;
-import lombok.extern.log4j.Log4j;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j

@@ -34,10 +34,10 @@ import java.util.concurrent.locks.ReentrantLock;
 public class Raft implements InitializingBean {
 
     // Persistent state on all servers
-    private int currentTerm; // 当前term
-    private Integer votedFor; // 给谁投票
+    private int            currentTerm; // 当前term
+    private Integer        votedFor; // 给谁投票
     private List<LogEntry> logEntrys;
-    private Peer currentPeer; // 当前节点信息
+    private Peer           currentPeer; // 当前节点信息
 
     // Volitale state on all servers
     private int commitIndex; // 提交位置
@@ -48,13 +48,13 @@ public class Raft implements InitializingBean {
     private int[] matchIndex; // 每个节点的接受的最大的index
 
     // Non-Paper Fields
-    private volatile RaftStateEnum raftState; // 节点角色
-    private ExecutorService pool = Executors.newFixedThreadPool(100);
-    private Peer[] peers; // 其他节点
-    private Lock appendLock = new ReentrantLock(); // 追加日志时的锁
-    private Condition appendCondtion = appendLock.newCondition(); // 追加日志时唤醒flw
-    private Lock voteLock = new ReentrantLock(); // 投票选举时的锁
-    private Thread raftThread = new Thread(new RaftMainLoop());// Raft的主线程
+    private volatile RaftStateEnum   raftState; // 节点角色
+    private          ExecutorService pool           = Executors.newFixedThreadPool(100);
+    private          Peer[]          peers; // 其他节点
+    private          Lock            appendLock     = new ReentrantLock(); // 追加日志时的锁
+    private          Condition       appendCondtion = appendLock.newCondition(); // 追加日志时唤醒flw
+    private          Lock            voteLock       = new ReentrantLock(); // 投票选举时的锁
+    private          Thread          raftThread     = new Thread(new RaftMainLoop());// Raft的主线程
 
     /**
      * 随机函数
@@ -130,7 +130,7 @@ public class Raft implements InitializingBean {
         try {
             log.info("vote request node term:{} votedFor:[{}]", currentTerm, votedFor);
             log.info("vote request candidater node request param term:{} , candidateId:{} ", request.getTerm(),
-                    request.getCandidateId());
+                     request.getCandidateId());
             VoteResponse voteResponse = new VoteResponse(currentTerm, Boolean.FALSE);
             // 该节点参与其他线程投票选举,等待
             voteLock.lock();
@@ -187,7 +187,7 @@ public class Raft implements InitializingBean {
             }
 
             log.info("node receive leader append request node term:{} , leader term :{} ,node become follower",
-                    currentTerm, request.getTerm());
+                     currentTerm, request.getTerm());
             raftState = RaftStateEnum.Follower;
             currentTerm = request.getTerm();
             votedFor = request.getLeaderId();
@@ -203,40 +203,31 @@ public class Raft implements InitializingBean {
             // 3.判断prevLogIndex是否在logEntrys中存在
             // 如果日志在 prevLogIndex 位置处的日志条目的任期号和 prevLogTerm 不匹配，则返回 false
             int prevLogIndex = request.getPrevLogIndex();
-            if (prevLogIndex != 0 && !CollectionUtils.isEmpty(logEntrys)) {
-                for (int i = logEntrys.size() - 1; i >= 0; i++) {
-                    LogEntry logEntry = logEntrys.get(i);
-                    if (Objects.equals(logEntry.getIndex(), prevLogIndex)) {
-                        // 存在 比较任期号
-                        if (!Objects.equals(logEntry.getTerm(), request.getTerm())) {
-                            // index相同任期号不同
-                            return response;
-                        }
-                    } else {
-                        // 减少nextIndex
+            if (prevLogIndex != 0 && this.getLastIndex() != 0) {
+                LogEntry prevLogEntry;
+                if ((prevLogEntry = this.getLog(prevLogIndex)) != null) {
+                    // 存在 比较任期号
+                    if (prevLogEntry.getTerm() != request.getTerm()) {
+                        // index相同任期号不同
                         return response;
                     }
+                } else {
+                    // 减少nextIndex
+                    return response;
                 }
             }
 
             // 4.解决日志冲突prevLogIndex到logEntrys中prevLogIndex之后的数据删除
             // 如果已经存在的日志条目和新的产生冲突（索引值相同但是任期号不同），删除这一条和之后所有的
-            int matchIndex = 0;
-            for (int i = logEntrys.size() - 1; i >= 0; i++) {
-                LogEntry logEntry = logEntrys.get(i);
-                if (Objects.equals(logEntry.getIndex(), prevLogIndex)) {
-                    matchIndex = prevLogIndex;
-                    break;
-                }
-            }
-
-            if (matchIndex != logEntrys.size() - 1) {
-                // 当前 flw prevLogIndex之后存在log 比较matchIndex+1的term和append entries[0] term
-                if (!Objects.equals(logEntrys.get(matchIndex + 1).getTerm(), leaderEntries.get(0).getTerm())) {
+            if (prevLogIndex != logEntrys.size() - 1) {
+                // 当前 flw prevLogIndex之后存在log 比较prevLogIndex+1的term和append entries[0] term
+                if (this.getLogTerm(prevLogIndex + 1) != leaderEntries.get(0).getTerm()) {
                     // 索引值相同,term不同
-                    // 删除这一条和之后的数据,并应用到状态机
-                    List<LogEntry> newLogEntrys = logEntrys.subList(0, matchIndex);
-                    for (int i = matchIndex + 1; i < logEntrys.size(); i++) {
+                    // 跟ld匹配的日志
+                    List<LogEntry> newLogEntrys = logEntrys.subList(0, prevLogIndex);
+
+                    // 删除prevLogIndex这一条和之后的数据,并应用到状态机
+                    for (int i = prevLogIndex + 1; i < logEntrys.size(); i++) {
                         LogEntry logEntry = logEntrys.get(i);
                         LogEntry delLogEntry = new LogEntry();
                         BeanUtils.copyProperties(logEntry, delLogEntry);
@@ -261,7 +252,7 @@ public class Raft implements InitializingBean {
             // 如果 leaderCommit > commitIndex，令 commitIndex 等于 leaderCommit 和 新日志条目索引值中较小的一个
             int leaderCommit = request.getLeaderCommit();
             if (leaderCommit > commitIndex) {
-                this.commitIndex = Math.min(leaderCommit, logEntrys.get(logEntrys.size() - 1).getIndex());
+                this.commitIndex = Math.min(leaderCommit, this.getLastIndex());
             }
             response.setSuccess(Boolean.TRUE);
             raftState = RaftStateEnum.Follower;
@@ -280,11 +271,11 @@ public class Raft implements InitializingBean {
 
         @Override
         public void run() {
-            for (;;) {
+            for (; ; ) {
                 log.info(
                         "\n==============================================================  loop start ===============================================================================");
                 log.info("node term:{}  votedFor:{}  raftState:{} , peer:{} ", currentTerm, votedFor,
-                        raftState.getCode(), GsonUtils.toJson(currentPeer));
+                         raftState.getCode(), GsonUtils.toJson(currentPeer));
                 if (raftState == RaftStateEnum.Follower) {
                     doAsFollower();
                 } else if (raftState == RaftStateEnum.Candidater) {
@@ -295,7 +286,7 @@ public class Raft implements InitializingBean {
                 log.info(
                         "\n==============================================================  loop end ===============================================================================");
                 log.info("node term:{}  votedFor:{}  raftState:{} , peer:{} ", currentTerm, votedFor,
-                        raftState.getCode(), GsonUtils.toJson(currentPeer));
+                         raftState.getCode(), GsonUtils.toJson(currentPeer));
             }
         }
 
@@ -338,7 +329,7 @@ public class Raft implements InitializingBean {
                 voteRequest.setLastIndex(getLastIndex());
                 voteRequest.setLastTerm(getLastTerm());
                 VoteResponse response = peer.requestVote(voteRequest);
-                if (response.isVoteGranted()) {
+                if (response != null && response.isVoteGranted()) {
                     countDownLatch.countDown();
                 }
             };
@@ -353,7 +344,7 @@ public class Raft implements InitializingBean {
             // 选举超时时间
             int electionTime = random.nextInt(Raft.this.electionTime) + Raft.this.electionTime;
             log.info("node start election peerId:{},term:{} election time: {} ", currentPeer.getPeerId(), currentTerm,
-                    electionTime + "ms");
+                     electionTime + "ms");
             countDownLatch.await(electionTime, TimeUnit.MILLISECONDS);
             if (countDownLatch.getCount() == 0) {
                 // 如果接收到大多数服务器的选票，那么就变成领导人
@@ -394,12 +385,12 @@ public class Raft implements InitializingBean {
                     if (result.getCode() == ErrorCodeEnum.SUCCESS.getCode()) {
                         // 请求成功
                         AppendEntriesResponse appendEntriesResponse = GsonUtils.fromJson(result.getBody().toString(),
-                                AppendEntriesResponse.class);
+                                                                                         AppendEntriesResponse.class);
                         if (appendEntriesResponse.isSuccess()) {
                             // 心跳成功 判断任期号,当前的任期号，用于领导人去更新自己
                             if (appendEntriesResponse.getTerm() > currentTerm) {
                                 log.info("node will become follower,my term:{} response term:{}", currentTerm,
-                                        appendEntriesResponse.getTerm());
+                                         appendEntriesResponse.getTerm());
                                 raftState = RaftStateEnum.Follower;
                                 votedFor = null;
                             }
@@ -442,4 +433,15 @@ public class Raft implements InitializingBean {
         return this.logEntrys.get(this.logEntrys.size() - 1).getTerm();
     }
 
+    private LogEntry getLog(int index) {
+        return index > logEntrys.size() - 1 ? null : logEntrys.get(index);
+    }
+
+    private int getLogTerm(int index) {
+        return logEntrys.get(index).getTerm();
+    }
+
+    private int getLogIndex(int index) {
+        return logEntrys.get(index).getIndex();
+    }
 }
