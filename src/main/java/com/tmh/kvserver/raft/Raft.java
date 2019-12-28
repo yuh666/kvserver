@@ -487,8 +487,8 @@ public class Raft implements InitializingBean {
             for (; ; ) {
                 log.info(
                         "\n==============================================================  loop start ===============================================================================");
-                log.info("node term:{}  votedFor:{}  raftState:{} , peer:{} logEntrys:{}", currentTerm, votedFor,
-                         raftState.getCode(), GsonUtils.toJson(currentPeer), GsonUtils.toJson(logEntrys));
+                log.info("node term:{}  votedFor:{}  raftState:{} , currentPeer:{} logEntrys:{}", currentTerm, votedFor,
+                         raftState.name(), GsonUtils.toJson(currentPeer), GsonUtils.toJson(logEntrys));
                 if (raftState == RaftStateEnum.Follower) {
                     doAsFollower();
                 } else if (raftState == RaftStateEnum.Candidater) {
@@ -499,7 +499,7 @@ public class Raft implements InitializingBean {
                 log.info(
                         "\n==============================================================  loop end ===============================================================================");
                 log.info("node term:{}  votedFor:{}  raftState:{} , peer:{} ", currentTerm, votedFor,
-                         raftState.getCode(), GsonUtils.toJson(currentPeer));
+                         raftState.name(), GsonUtils.toJson(currentPeer));
             }
         }
 
