@@ -15,6 +15,8 @@ public enum ErrorCodeEnum {
     SUCCESS(200, "ok"),
 
     FAIl(500, "fail"),
+
+    SERVICE_UNAVAILABLE(501, "服务不可用,集群无leader"),
     ;
 
     @Getter
