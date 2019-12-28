@@ -3,29 +3,28 @@
     <!--定义日志文件的存储地址 勿在 LogBack 的配置中使用相对路径-->
     <property name="LOG_HOME" value="."/>
 
-    <!--
-        格式化输出：
-        %d表示日期，
-        %thread表示线程名，
-        %-5level：级别从左显示5个字符宽度，
-        %logger{50}：Class对象的全限定名称，最长50个字符
-        %line：行号，
-        %msg：日志消息，%n是换行符
-
-        颜色：
-        %red
-        %green
-        %cyan
-        %highlight
-        %boldMagenta
-    -->
-    <property name="LOG_FORMAT"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %boldMagenta([%thread]) %highlight(%-5level) %cyan(%logger{50} %line) - %msg%n"/>
-
     <!-- 控制台输出 -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-            <pattern>${LOG_FORMAT}</pattern>
+            <!--
+                格式化输出：
+                %d表示日期，
+                %thread表示线程名，
+                %-5level：级别从左显示5个字符宽度，
+                %logger{50}：Class对象的全限定名称，最长50个字符
+                %line：行号，
+                %msg：日志消息，%n是换行符
+
+                颜色：
+                %red
+                %green
+                %cyan
+                %highlight
+                %boldMagenta
+            -->
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %boldMagenta([%thread]) %highlight(%-5level) %cyan(%logger{50} %line) -
+                %msg%n
+            </pattern>
         </encoder>
     </appender>
 
@@ -39,7 +38,7 @@
         </rollingPolicy>
 
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-            <pattern>${LOG_FORMAT}</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} %line - %msg%n</pattern>
         </encoder>
         <!--日志文件最大的大小-->
         <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
