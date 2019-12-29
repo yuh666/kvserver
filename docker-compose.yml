@@ -8,7 +8,8 @@ services:
     environment:
       - "serverPort=8081"
       - "serverPeers=kvserver-8081:8081:1,kvserver-8082:8082:2,kvserver-8083:8083:3"
-      - "logging.file.name=kvserver-8081.log"
+    volumes: 
+      - /tmp/raft/log:/log
   kvserver2:
     image: kvserver:latest
     container_name: kvserver-8082
@@ -17,7 +18,8 @@ services:
     environment:
       - "serverPort=8082"
       - "serverPeers=kvserver-8081:8081:1,kvserver-8082:8082:2,kvserver-8083:8083:3"
-      - "logging.file.name=kvserver-8082.log"
+    volumes: 
+      - /tmp/raft/log:/log
   kvserver3:
     image: kvserver:latest
     container_name: kvserver-8083
@@ -26,4 +28,5 @@ services:
     environment:
       - "serverPort=8083"
       - "serverPeers=kvserver-8081:8081:1,kvserver-8082:8082:2,kvserver-8083:8083:3"
-      - "logging.file.name=kvserver-8083.log"
+    volumes: 
+      - /tmp/raft/log:/log
